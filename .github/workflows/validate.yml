@@ -1,0 +1,38 @@
+name: Validate skills
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Discover skills in checkout
+        run: npx --yes skills add . --list
+
+      - name: Validate skill directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for skill_dir in skills/*/; do
+            test -f "${skill_dir}SKILL.md"
+            test -f "${skill_dir}LICENSE.md"
+            test -f "${skill_dir}NOTICE.md"
+          done
+
+      - name: Reject deprecated review reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R --line-number --fixed-strings 'precommit-review' skills
