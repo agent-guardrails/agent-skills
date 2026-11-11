@@ -5,14 +5,16 @@ description: "Review completed implementation before handoff or release. Use for
 
 # Review Work
 
-Review completed work through exactly two lanes:
+Review completed work through exactly two verdict lanes, in sequence:
 
 | Lane | Owner | Question |
 | --- | --- | --- |
 | Manual QA | The primary reviewer | Does the delivered surface work for a real user? |
 | Independent gate review | Exactly one independent reviewer | Does the change meet the goal, constraints, behavior, quality, security, context, QA, and scope requirements? |
 
-Do not add review lanes. Do not self-approve. This skill reviews completed work only. It does not publish comments or mutate code.
+Run primary manual QA first. Run the independent-review role only after manual QA passes. Do not add review lanes. Do not self-approve. This skill reviews completed work only. It does not publish comments or mutate code.
+
+This skill is non-UI. Browser workflows, browser automation, screenshots, UI testing, visual QA, and TUI visual review are out of scope. A terminal application's behavior may be tested through an interactive terminal transcript, but its appearance, layout, and other visual qualities are not reviewed.
 
 ## Review Inputs
 
@@ -29,6 +31,12 @@ Use the host's available capabilities to inspect version-control history, change
 
 Use an isolated review checkout or worktree when the host supports it and it improves safety. A dedicated worktree is not required. Never change the implementation as part of this review.
 
+### Optional Supporting Role: External Research
+
+Use the `external-research` role only when local evidence is insufficient to answer a bounded review question. It may collect repository history, issue context, public specifications, or dependency documentation. Record each finding with its source and why it matters.
+
+External research supports the two verdict lanes. It must not implement changes, approve the work, replace independent review, or create a third verdict lane. If the needed evidence remains unavailable, record that gap for the independent-review role.
+
 ## Lane 1: Real-Surface Manual QA
 
 The primary reviewer personally runs this lane. Do not delegate it.
@@ -36,7 +44,7 @@ The primary reviewer personally runs this lane. Do not delegate it.
 1. Exercise the final delivered state through the surface a user would use.
 2. Select the closest faithful channel:
     - HTTP or API: send a real request and retain the response evidence.
-    - CLI or TUI: run it in an interactive terminal and retain a transcript.
+    - CLI or terminal application: run its behavior in an interactive terminal and retain a transcript. Do not assess visual presentation.
     - Tests or builds: run the relevant checks and retain their output.
     - Library or SDK: run a small consumer program that imports and uses the public API.
     - Data, configuration, migration, or generated output: inspect the resulting artifact against the expected result.
@@ -52,7 +60,7 @@ If the application cannot start, or any QA row fails, stop immediately. Report *
 
 ## Lane 2: Independent Gate Review
 
-After manual QA passes, request exactly one independent reviewer through any host capability that can provide an independent review. Give that reviewer the goal, constraints, background, changed-file list, diff, relevant file contents or readable paths, context findings, and complete QA matrix with evidence pointers.
+After manual QA passes, request exactly one `independent-review` role through any host capability that can provide an independent review. Give that reviewer the goal, constraints, background, changed-file list, diff, relevant file contents or readable paths, context findings, and complete QA matrix with evidence pointers.
 
 The reviewer must not implement fixes. It must validate claims against provided evidence or accessible artifacts, then use this checklist:
 
@@ -90,7 +98,7 @@ NOTES
 
 The reviewer may reject only with a specific failed goal item, violated constraint, failing QA row, or missing evidence required by a stated criterion. Style preferences and hypothetical future needs are notes, not blockers.
 
-If the host cannot provide an independent reviewer, the reviewer cannot access enough evidence, or no verdict arrives, record the gate lane as **INCONCLUSIVE**. Never replace it with self-review or an inferred approval.
+If the host cannot provide the `independent-review` role, the reviewer cannot access enough evidence, or no verdict arrives, record the gate lane as **INCONCLUSIVE**. Never replace it with self-review or an inferred approval.
 
 ## Verdict Rules
 
