@@ -11,11 +11,10 @@ Original license: Sustainable Use License 1.0. The upstream license text is reta
 This derivative has been substantially adapted for portable installation across agent hosts:
 
 - Replaced host-specific agent APIs, compatibility tables, role names, mailbox rules, and fixed agent locations with capability-based instructions for one independent reviewer.
-- Removed dependencies on host-specific review loops, browser automation APIs, visual QA integrations, and named subagent protocols.
+- Removed dependencies on host-specific review loops, browser automation APIs, visual QA integrations, and named subagent protocols. Browser workflows, UI, and visual evidence are intentionally omitted to match this repository's non-UI scope.
 - Replaced mandatory command examples with optional host-neutral capability examples for source inspection, VCS history, issue tracking, and CI evidence.
 - Made isolated VCS worktree use conditional rather than mandatory.
-- Added explicit evidence formats: local paths, CI URLs, report IDs, screenshots, and transcripts.
-- Added explicit browser and user-profile authorization rules, with isolated state required when authorization is absent.
+- Limited manual-QA evidence to CLI, API, tests, builds, library or SDK consumers, and data, configuration, migration, or generated artifacts.
 - Preserved and clarified the two-lane gate: primary-reviewer real-surface QA plus exactly one independent reviewer.
 - Added fail-fast handling for manual QA failures and an evidence-backed QA matrix requirement.
 - Added the goal, constraints, behavior, quality, security, context, QA evidence, and scope checklist for the independent gate.

@@ -35,21 +35,18 @@ The primary reviewer personally runs this lane. Do not delegate it.
 
 1. Exercise the final delivered state through the surface a user would use.
 2. Select the closest faithful channel:
-   - HTTP or API: send a real request and retain the response evidence.
-   - CLI or TUI: run it in an interactive terminal and retain a transcript.
-   - Web: drive a real browser and retain action evidence plus screenshots when useful.
-   - Desktop GUI: automate or operate the running application and retain action evidence plus screenshots.
-   - Library or SDK: run a small consumer program that imports and uses the public API.
-   - Data, configuration, migration, or generated output: inspect the resulting artifact against the expected result.
+    - HTTP or API: send a real request and retain the response evidence.
+    - CLI or TUI: run it in an interactive terminal and retain a transcript.
+    - Tests or builds: run the relevant checks and retain their output.
+    - Library or SDK: run a small consumer program that imports and uses the public API.
+    - Data, configuration, migration, or generated output: inspect the resulting artifact against the expected result.
 3. Cover every stated success criterion, the named happy path, the riskiest edge case, and an adjacent regression risk.
 4. Record a QA matrix. A row may only pass when it has an evidence pointer.
 
 | # | Scenario | Exact action | Expected | Observed | Verdict | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
 
-Evidence may be a local path, CI URL, report ID, screenshot, terminal transcript, browser action log, request and response capture, or equivalent durable record.
-
-Browser or user-profile access requires explicit authorization. Without it, use isolated browser state and do not access the user's signed-in profile.
+Evidence may be a local path, test or build report, terminal transcript, request and response capture, generated artifact, or equivalent durable non-UI record.
 
 If the application cannot start, or any QA row fails, stop immediately. Report **FAILED** with the failing rows. Do not launch the independent gate reviewer until the failure is fixed and the affected QA is rerun.
 
