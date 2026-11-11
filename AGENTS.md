@@ -29,8 +29,10 @@ Do not create or change skill content without preserving the licensing and prove
 There is no build step. Run these test and validation commands before requesting review:
 
 ```sh
-npx --yes skills add . --list
-if [ -d skills ]; then find skills -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' \; -exec test -f '{}/LICENSE.md' \; -exec test -f '{}/NOTICE.md' \; && ! grep -R --line-number --fixed-strings 'precommit-review' skills; fi
+npm ci --ignore-scripts
+npx --no-install skills add . --list
+node --test test/validate-skills.test.mjs
+node scripts/validate-skills.mjs
 ```
 
-The GitHub Actions workflow in `.github/workflows/validate.yml` runs the same repository checks on pull requests and pushes.
+The validator uses only Node.js 22 built-ins. It checks every package under `skills/`, including required files, `SKILL.md` frontmatter, recursively bundled Markdown links, and portability constraints. The GitHub Actions workflow in `.github/workflows/validate.yml` runs the same repository checks on pull requests and pushes.
