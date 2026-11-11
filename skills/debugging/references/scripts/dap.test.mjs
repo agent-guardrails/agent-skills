@@ -20,10 +20,10 @@ function frame(message) {
   return Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`), body]);
 }
 
-function session({ noAnswer = false } = {}) {
+function session({ fixtureMode = "success", timeoutMs = 5_000, frameId = 73 } = {}) {
   const child = spawn(process.execPath, [client], {
     cwd: directory,
-    env: { ...process.env, DAP_TIMEOUT_MS: noAnswer ? "300" : "5000", ...(noAnswer ? { DAP_FIXTURE_NO_ANSWER: "1" } : {}) },
+    env: { ...process.env, DAP_TIMEOUT_MS: String(timeoutMs), DAP_FIXTURE_MODE: fixtureMode, DAP_FIXTURE_FRAME_ID: String(frameId) },
   });
   children.add(child);
   let output = "";
@@ -41,6 +41,13 @@ async function until(currentSession, predicate, timeout = 15_000) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(predicate(currentSession.output()), true, currentSession.output());
+}
+
+async function assertLaunchFailure(fixtureMode, expectedError) {
+  const currentSession = session({ fixtureMode, timeoutMs: 300 });
+  await until(currentSession, (output) => output.includes(`ERR: ${expectedError}`) || output.includes("READY: launch"), 4_000);
+  assert.match(currentSession.output(), new RegExp(`ERR: ${expectedError}`));
+  assert.doesNotMatch(currentSession.output(), /READY: launch/);
 }
 
 test("treats Windows paths as executable specifications", () => {
@@ -63,6 +70,71 @@ describe("DAP framing", () => {
   test("rejects malformed frames", () => {
     const parser = new DapFrameParser();
     assert.throws(() => parser.push(Buffer.from("Bad: header\r\n\r\n{}")), /malformed-frame/);
+  });
+});
+
+describe("launch readiness", () => {
+  test("supports a launch response deferred until configurationDone", async () => {
+    const currentSession = session({ fixtureMode: "deferred-launch" });
+    await until(currentSession, (output) => output.includes("READY: launch"), 500);
+    assert.doesNotMatch(currentSession.output(), /ERR:/);
+  });
+
+  test("does not emit READY when launch fails", async () => {
+    await assertLaunchFailure("failed-launch", "adapter-error");
+  });
+
+  test("does not emit READY when launch times out", async () => {
+    await assertLaunchFailure("timeout-launch", "timeout");
+  });
+
+  test("does not emit READY when configurationDone fails", async () => {
+    await assertLaunchFailure("failed-configuration", "adapter-error");
+  });
+
+  test("does not emit READY when configurationDone times out", async () => {
+    await assertLaunchFailure("timeout-configuration", "timeout");
+  });
+});
+
+describe("frame selection", () => {
+  test("scopes uses the frame returned by stackTrace", async () => {
+    const currentSession = session({ frameId: 731 });
+    await until(currentSession, (output) => output.includes("READY: launch"));
+    currentSession.command("scopes");
+    await until(currentSession, (output) => output.includes("NAME\tVARIABLES_REFERENCE") || output.includes("ERR:"));
+    assert.match(currentSession.output(), /Locals\t7/);
+    assert.doesNotMatch(currentSession.output(), /ERR:/);
+  });
+
+  test("eval uses the frame returned by stackTrace", async () => {
+    const currentSession = session({ frameId: 941 });
+    await until(currentSession, (output) => output.includes("READY: launch"));
+    currentSession.command("eval 6 * 7");
+    await until(currentSession, (output) => output.includes("EVAL\t") || output.includes("ERR:"));
+    assert.match(currentSession.output(), /EVAL\t42/);
+    assert.doesNotMatch(currentSession.output(), /ERR:/);
+  });
+
+  test("scopes and eval fail clearly when stackTrace has no frame", async () => {
+    const currentSession = session({ fixtureMode: "no-frames" });
+    await until(currentSession, (output) => output.includes("READY: launch"));
+    currentSession.command("scopes");
+    currentSession.command("eval 6 * 7");
+    await until(currentSession, (output) => (output.match(/ERR: no-frame/g) ?? []).length === 2 || (output.match(/ERR:/g) ?? []).length === 2);
+    assert.equal((currentSession.output().match(/ERR: no-frame/g) ?? []).length, 2, currentSession.output());
+    assert.doesNotMatch(currentSession.output(), /NAME\tVARIABLES_REFERENCE|EVAL\t/);
+  });
+
+  test("a stopped event invalidates the cached frame", async () => {
+    const currentSession = session({ fixtureMode: "frame-changes-after-scopes", frameId: 1_111 });
+    await until(currentSession, (output) => output.includes("READY: launch"));
+    currentSession.command("scopes");
+    await until(currentSession, (output) => output.includes("Locals\t7") || output.includes("ERR:"));
+    currentSession.command("eval 6 * 7");
+    await until(currentSession, (output) => output.includes("EVAL\t") || output.includes("ERR:"));
+    assert.match(currentSession.output(), /EVAL\t42/);
+    assert.doesNotMatch(currentSession.output(), /ERR:/);
   });
 });
 
@@ -94,6 +166,6 @@ test("classifies unverified breakpoints and timeouts", async () => {
   await until(currentSession, (output) => output.includes("READY: launch"));
   currentSession.command("break /tmp/unverified.py:9");
   await until(currentSession, (output) => output.includes("ERR: unverified-breakpoint"));
-  const timeoutSession = session({ noAnswer: true });
+  const timeoutSession = session({ fixtureMode: "timeout-initialize", timeoutMs: 300 });
   await until(timeoutSession, (output) => output.includes("ERR: timeout"));
 });

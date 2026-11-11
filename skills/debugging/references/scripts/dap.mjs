@@ -128,6 +128,7 @@ function onMessage(message) {
   }
   if (message.event === "stopped") {
     currentStop = message.body || {};
+    topFrame = null;
     emitEvent("stopped", currentStop);
   }
   if (message.event === "terminated" || message.event === "exited") {
@@ -196,7 +197,7 @@ function adapterIdFor(spec) {
 }
 
 function classify(error) {
-  if (["timeout", "adapter-error", "no-session", "malformed-frame"].includes(error.message)) return error.message;
+  if (["timeout", "adapter-error", "no-session", "no-frame", "malformed-frame"].includes(error.message)) return error.message;
   return "adapter-failed";
 }
 
@@ -206,9 +207,13 @@ async function launch(adapter, program, programArguments) {
   try {
     await startAdapter(adapter);
     await request("initialize", { clientID: "portable-dap-client", adapterID: adapterIdFor(adapter), linesStartAt1: true, columnsStartAt1: true, pathFormat: "path" });
-    await request("launch", { program, args: programArguments, console: "internalConsole", justMyCode: false, stopOnEntry: true }).catch(() => null);
+    const launchResult = request("launch", { program, args: programArguments, console: "internalConsole", justMyCode: false, stopOnEntry: true }).then(
+      () => ({ error: null }),
+      (error) => ({ error }),
+    );
     await waitForInitialization();
-    await request("configurationDone").catch(() => null);
+    const [launchOutcome] = await Promise.all([launchResult, request("configurationDone")]);
+    if (launchOutcome.error) throw launchOutcome.error;
     await waitForStop(false, 2_000);
     line("READY: launch");
   } catch (error) {
@@ -227,6 +232,15 @@ async function snapshot() {
   } catch (error) {
     reportError(classify(error));
   }
+}
+
+async function frameForCurrentStop() {
+  if (topFrame) return topFrame;
+  const response = await request("stackTrace", { threadId: currentStop?.threadId || 1, levels: 1 });
+  const frame = response.body?.stackFrames?.[0];
+  if (!Number.isInteger(frame?.id)) throw new Error("no-frame");
+  topFrame = frame;
+  return frame;
 }
 
 function boundedTable(header, rows) {
@@ -289,6 +303,7 @@ async function handleCommand(input) {
       const dapCommand = { step: "next", stepin: "stepIn", stepout: "stepOut" }[commandName] || commandName;
       const threadId = currentStop?.threadId || 1;
       currentStop = null;
+      topFrame = null;
       await request(dapCommand, { threadId });
       await waitForStop();
       await snapshot();
@@ -300,7 +315,8 @@ async function handleCommand(input) {
       return;
     }
     if (commandName === "scopes") {
-      const response = await request("scopes", { frameId: topFrame?.id || 42 });
+      const frame = await frameForCurrentStop();
+      const response = await request("scopes", { frameId: frame.id });
       boundedTable(["NAME", "VARIABLES_REFERENCE"], (response.body?.scopes || []).map((scope) => [scope.name, String(scope.variablesReference)]));
       return;
     }
@@ -312,7 +328,8 @@ async function handleCommand(input) {
     }
     if (commandName === "eval") {
       if (!parts.length) return reportError("invalid-args");
-      const response = await request("evaluate", { expression: parts.join(" "), frameId: topFrame?.id || 42 });
+      const frame = await frameForCurrentStop();
+      const response = await request("evaluate", { expression: parts.join(" "), frameId: frame.id });
       line(`EVAL\t${response.body?.result || ""}`);
       return;
     }
