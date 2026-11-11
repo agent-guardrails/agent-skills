@@ -2,6 +2,10 @@
   "name": "@agent-guardrails/agent-skills",
   "private": true,
   "devDependencies": {
-    "skills": "1.7.4"
+    "skills": "1.7.4",
+    "yaml": "2.9.1"
+  },
+  "engines": {
+    "node": ">=22.20.0"
   }
 }

@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import path from "node:path";
 
 export function repositoryPath(repositoryRoot, targetPath) {
@@ -30,7 +30,11 @@ export async function pathExists(targetPath) {
 
 export async function fileStatus(targetPath) {
   try {
-    return (await stat(targetPath)).isFile() ? "file" : "other";
+    const status = await lstat(targetPath);
+    if (status.isSymbolicLink()) {
+      return "symlink";
+    }
+    return status.isFile() ? "file" : "other";
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return "missing";

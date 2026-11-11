@@ -1,4 +1,4 @@
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -60,17 +60,24 @@ const SCANNABLE_TEXT_EXTENSIONS = new Set([
 ]);
 
 export async function collectScannableTextFiles(directoryPath) {
-  const entries = await readdir(directoryPath, { withFileTypes: true });
   const files = [];
-  for (const entry of entries.sort((left, right) => compareText(left.name, right.name))) {
-    const entryPath = path.join(directoryPath, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await collectScannableTextFiles(entryPath)));
-    } else if (entry.isFile() && SCANNABLE_TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-      files.push(entryPath);
+  const symbolicLinks = [];
+  async function collect(currentDirectory) {
+    const entries = await readdir(currentDirectory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => compareText(left.name, right.name))) {
+      const entryPath = path.join(currentDirectory, entry.name);
+      const status = await lstat(entryPath);
+      if (status.isSymbolicLink()) {
+        symbolicLinks.push(entryPath);
+      } else if (status.isDirectory()) {
+        await collect(entryPath);
+      } else if (status.isFile() && SCANNABLE_TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        files.push(entryPath);
+      }
     }
   }
-  return files;
+  await collect(directoryPath);
+  return { files, symbolicLinks };
 }
 
 function markdownDestinations(line) {
@@ -190,17 +197,24 @@ export async function validateTextFile(context, sourceFile) {
 
   let fence;
   for (const [index, line] of lines.entries()) {
-    const fenceMatch = /^\s*(`{3,}|~{3,})/u.exec(line);
-    if (fenceMatch !== null) {
-      const marker = fenceMatch[1][0];
-      if (fence === undefined) {
-        fence = marker;
-      } else if (fence === marker) {
-        fence = undefined;
-      }
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    if (
+      fence === undefined &&
+      fenceMatch !== null &&
+      !(fenceMatch[1][0] === "`" && fenceMatch[2].includes("`"))
+    ) {
+      fence = { marker: fenceMatch[1][0], length: fenceMatch[1].length };
       continue;
     }
     if (fence !== undefined) {
+      if (
+        fenceMatch !== null &&
+        fenceMatch[1][0] === fence.marker &&
+        fenceMatch[1].length >= fence.length &&
+        /^\s*$/u.test(fenceMatch[2])
+      ) {
+        fence = undefined;
+      }
       continue;
     }
     const prose = line.replace(/(`+)[^`]*\1/gu, "");

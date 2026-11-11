@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
@@ -21,6 +21,7 @@ const REQUIRED_FILES = ["LICENSE.md", "NOTICE.md", "SKILL.md"];
 async function validateSkill(repositoryRoot, skillEntry, errors) {
   const skillPath = path.join(repositoryRoot, "skills", skillEntry.name);
   let skillFileIsRegular = false;
+  const requiredSymbolicLinks = new Set();
   for (const requiredFile of REQUIRED_FILES) {
     const requiredPath = path.join(skillPath, requiredFile);
     const status = await fileStatus(requiredPath);
@@ -28,12 +29,17 @@ async function validateSkill(repositoryRoot, skillEntry, errors) {
       skillFileIsRegular = status === "file";
     }
     if (status !== "file") {
+      if (status === "symlink") {
+        requiredSymbolicLinks.add(requiredPath);
+      }
       report(errors, {
         path: repositoryPath(repositoryRoot, requiredPath),
         line: 1,
         message: status === "missing"
           ? "Required file is missing."
-          : "Required file is missing or is not a regular file.",
+          : status === "symlink"
+            ? "Required file must be a regular file and must not be a symbolic link."
+            : "Required file is missing or is not a regular file.",
       });
     }
   }
@@ -51,7 +57,18 @@ async function validateSkill(repositoryRoot, skillEntry, errors) {
     skillPath,
     skillRealPath: await realpath(skillPath),
   };
-  for (const textFile of await collectScannableTextFiles(skillPath)) {
+  const collected = await collectScannableTextFiles(skillPath);
+  for (const symbolicLink of collected.symbolicLinks) {
+    if (requiredSymbolicLinks.has(symbolicLink)) {
+      continue;
+    }
+    report(errors, {
+      path: repositoryPath(repositoryRoot, symbolicLink),
+      line: 1,
+      message: "Skill package content must not contain symbolic links.",
+    });
+  }
+  for (const textFile of collected.files) {
     await validateTextFile(context, textFile);
   }
 }
@@ -63,10 +80,25 @@ async function validateRepositoryWithMetadata(repositoryRoot) {
   if (!(await pathExists(skillsPath))) {
     report(errors, { path: "skills", line: 1, message: "Skills directory is missing." });
   } else {
-    const entries = (await readdir(skillsPath, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
+    const entries = [];
+    let symbolicLinkCount = 0;
+    const packageEntries = (await readdir(skillsPath, { withFileTypes: true }))
       .sort((left, right) => compareText(left.name, right.name));
-    if (entries.length === 0) {
+    for (const entry of packageEntries) {
+      const entryPath = path.join(skillsPath, entry.name);
+      const status = await lstat(entryPath);
+      if (status.isSymbolicLink()) {
+        symbolicLinkCount += 1;
+        report(errors, {
+          path: repositoryPath(absoluteRoot, entryPath),
+          line: 1,
+          message: "Skill package entry must be a directory and must not be a symbolic link.",
+        });
+      } else if (status.isDirectory()) {
+        entries.push(entry);
+      }
+    }
+    if (entries.length === 0 && symbolicLinkCount === 0) {
       report(errors, { path: "skills", line: 1, message: "No skill packages found." });
     }
     for (const entry of entries) {
