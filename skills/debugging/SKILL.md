@@ -20,7 +20,6 @@ Before attaching or instrumenting, read the matching runtime guide:
 
 Read each applicable specialist guide before using that tool:
 
-- [Browser QA](references/tools/browser-qa.md)
 - [DAP client](references/tools/dap.md)
 - [Ghidra](references/tools/ghidra.md)
 - [pwndbg](references/tools/pwndbg.md)
@@ -56,6 +55,6 @@ When the real operation cannot run, use [partial runtime evidence](references/me
 - Re-observe state immediately before mutating a live debug session.
 - Confirm the cause only when toggling it toggles the failure and reverting restores the failure.
 - Capture a failing owner test or regression test before the production fix; verify the same case turns green afterward.
-- Do not stop at compilation or unit tests. Use the real CLI, API, browser, worker, service, or binary path.
+- Do not stop at compilation or unit tests. Use the real CLI, API, worker, service, library, or binary path.
 - Remove all temporary instrumentation and artifacts, then run the repository's full relevant gates.
 - Do not claim independent review when the host supplied no independent reviewer.

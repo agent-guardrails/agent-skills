@@ -18,10 +18,10 @@ This copy has been modified. The modifications are substantial and include:
 - Replaced fixed home-directory journal and coordination paths with project-local temporary artifacts and repository-neutral rollback guidance.
 - Added explicit authorization gates before privileged, system-wide, network-intercepting, binary-modifying, process-injecting, or reverse-engineering actions.
 - Marked shell commands as OS-specific examples and added a generic unsupported-runtime fallback.
-- Replaced product-specific browser automation with capability-based real-browser requirements and Playwright-compatible examples.
+- Intentionally omitted browser workflow material to match this repository's non-UI scope. Browser, UI, and visual-QA guidance are not part of this skill.
 - Renamed DAP client identifiers to portable values, made the helper Node 22 native, and ported its test suite from Bun/TypeScript to Node's built-in `node:test` and `assert` facilities in `.mjs` files.
 - Tightened DAP framing errors so malformed protocol frames are surfaced rather than silently discarded.
 - Preserved and reorganized the evidence-driven method: runtime observations, artifact journal, three orthogonal hypotheses, optional parallel investigation, two-round independent reframing, reversible causal proof, failing-first regression, real-surface QA, cleanup, and final evidence gates.
-- Adapted every upstream methodology, runtime, tool, and helper reference; no substantive upstream reference category was dropped.
+- Retained and adapted the portable runtime, methodology, tool, and helper material relevant to the repository scope. Browser workflow material was intentionally omitted.
 
 No permissive relicensing is claimed. Distribution and use remain subject to [LICENSE.md](LICENSE.md).
