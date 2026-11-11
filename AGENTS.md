@@ -26,13 +26,13 @@ Do not create or change skill content without preserving the licensing and prove
 
 ## Validation
 
-There is no build step. Run these test and validation commands before requesting review:
+There is no build step. Use Node.js 22.20.0 or newer and run these test and validation commands before requesting review:
 
 ```sh
 npm ci --ignore-scripts
 npx --no-install skills add . --list
-node --test test/validate-skills.test.mjs
+node --test test/validate-skills.test.mjs skills/debugging/references/scripts/dap.test.mjs
 node scripts/validate-skills.mjs
 ```
 
-The validator uses only Node.js 22 built-ins. It checks every package under `skills/`, including required files, `SKILL.md` frontmatter, recursively bundled Markdown links, and portability constraints. The GitHub Actions workflow in `.github/workflows/validate.yml` runs the same repository checks on pull requests and pushes.
+The validator uses Node.js and the pinned YAML parser in `package-lock.json`. It checks every package under `skills/`, including required files, `SKILL.md` frontmatter, recursively bundled Markdown links, and portability constraints. The GitHub Actions workflow in `.github/workflows/validate.yml` runs the same repository checks on pull requests and pushes.

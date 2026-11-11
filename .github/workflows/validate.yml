@@ -15,7 +15,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.20.0
 
       - name: Install pinned validation dependencies
         run: npm ci --ignore-scripts
@@ -23,8 +23,8 @@ jobs:
       - name: Discover skills in checkout
         run: npx --no-install skills add . --list
 
-      - name: Test skill repository validator
-        run: node --test test/validate-skills.test.mjs
+      - name: Test repository tooling
+        run: node --test test/validate-skills.test.mjs skills/debugging/references/scripts/dap.test.mjs
 
       - name: Validate skill repository
         run: node scripts/validate-skills.mjs
