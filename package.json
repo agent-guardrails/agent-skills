@@ -1,0 +1,7 @@
+{
+  "name": "@agent-guardrails/agent-skills",
+  "private": true,
+  "devDependencies": {
+    "skills": "1.7.4"
+  }
+}
