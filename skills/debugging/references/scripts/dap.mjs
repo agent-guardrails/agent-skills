@@ -8,37 +8,107 @@ import { argv, env, stderr, stdin, stdout } from "node:process";
 
 export const MAX_ROWS = 100;
 export const MAX_OUTPUT_BYTES = 32 * 1024;
+export const MAX_HEADER_BYTES = 8 * 1024;
+export const MAX_FRAME_BYTES = 1024 * 1024;
+export const MAX_RETAINED_BYTES = 2 * 1024 * 1024;
+export const MAX_STDERR_BYTES = 32 * 1024;
+export const MAX_FIELD_BYTES = 4 * 1024;
+
+function tcpAdapterEndpoint(spec) {
+  const match = /^(?:127\.0\.0\.1|(\[::1\])):(\d+)$/.exec(spec);
+  if (!match) return null;
+  const port = Number(match[2]);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
+  return { host: match[1] ? "::1" : "127.0.0.1", port };
+}
 
 export function isTcpAdapterSpec(spec) {
-  const separator = spec.lastIndexOf(":");
-  return separator > 0 && !spec.includes("/") && !spec.includes("\\") && /^\d+$/.test(spec.slice(separator + 1));
+  return tcpAdapterEndpoint(spec) !== null;
+}
+
+function escapedField(value, maximumBytes) {
+  let output = "";
+  let outputBytes = 0;
+  for (const character of String(value ?? "")) {
+    const codePoint = character.codePointAt(0);
+    let fragment = character;
+    if (codePoint === 9) fragment = "\\t";
+    else if (codePoint === 10) fragment = "\\n";
+    else if (codePoint === 13) fragment = "\\r";
+    else if (codePoint <= 31 || (codePoint >= 127 && codePoint <= 159)) fragment = `\\x${codePoint.toString(16).padStart(2, "0")}`;
+    const fragmentBytes = Buffer.byteLength(fragment);
+    if (outputBytes + fragmentBytes > maximumBytes) break;
+    output += fragment;
+    outputBytes += fragmentBytes;
+  }
+  return output;
+}
+
+export function renderAdapterField(value) {
+  return escapedField(value, MAX_FIELD_BYTES);
 }
 
 export class DapFrameParser {
   constructor() {
     this.buffer = Buffer.alloc(0);
+    this.failed = false;
   }
 
-  push(chunk) {
-    this.buffer = Buffer.concat([this.buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
-    const messages = [];
+  fail() {
+    this.failed = true;
+    this.buffer = Buffer.alloc(0);
+    throw new Error("malformed-frame");
+  }
+
+  parseAvailable(messages) {
     while (true) {
       const marker = this.buffer.indexOf(Buffer.from("\r\n\r\n"));
-      if (marker < 0) return messages;
-      const header = this.buffer.subarray(0, marker).toString("ascii");
-      const match = header.match(/(?:^|\r\n)Content-Length:\s*(\d+)/i);
-      if (!match) throw new Error("malformed-frame");
-      const length = Number(match[1]);
-      const start = marker + 4;
-      if (this.buffer.length < start + length) return messages;
-      const body = this.buffer.subarray(start, start + length);
-      this.buffer = this.buffer.subarray(start + length);
+      if (marker < 0) {
+        if (this.buffer.length >= MAX_HEADER_BYTES) this.fail();
+        return;
+      }
+      if (marker + 4 > MAX_HEADER_BYTES) this.fail();
+      const headerBytes = this.buffer.subarray(0, marker);
+      for (const byte of headerBytes) {
+        if ((byte < 32 && byte !== 9 && byte !== 13 && byte !== 10) || byte > 126) this.fail();
+      }
+      const contentLengths = [];
+      for (const line of headerBytes.toString("ascii").split("\r\n")) {
+        const header = /^([!#$%&'*+\-.^_`|~0-9A-Za-z]+):[ \t]*(.*)$/.exec(line);
+        if (!header) this.fail();
+        if (header[1].toLowerCase() !== "content-length") continue;
+        if (!/^\d+$/.test(header[2].trim())) this.fail();
+        contentLengths.push(header[2].trim());
+      }
+      if (contentLengths.length !== 1) this.fail();
+      const length = Number(contentLengths[0]);
+      if (!Number.isSafeInteger(length) || length > MAX_FRAME_BYTES) this.fail();
+      const bodyStart = marker + 4;
+      if (this.buffer.length < bodyStart + length) return;
+      const body = this.buffer.subarray(bodyStart, bodyStart + length);
+      this.buffer = this.buffer.subarray(bodyStart + length);
       try {
         messages.push(JSON.parse(body.toString("utf8")));
       } catch {
-        throw new Error("malformed-frame");
+        this.fail();
       }
     }
+  }
+
+  push(chunk) {
+    if (this.failed) throw new Error("malformed-frame");
+    const input = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const messages = [];
+    let offset = 0;
+    while (offset < input.length) {
+      const available = MAX_RETAINED_BYTES - this.buffer.length;
+      if (available === 0) this.fail();
+      const consumed = Math.min(available, input.length - offset);
+      this.buffer = Buffer.concat([this.buffer, input.subarray(offset, offset + consumed)]);
+      offset += consumed;
+      this.parseAvailable(messages);
+    }
+    return messages;
   }
 }
 
@@ -49,6 +119,7 @@ let initialized = false;
 let terminated = false;
 let currentStop = null;
 let topFrame = null;
+let fatalTransportError = null;
 const pending = new Map();
 const breakpoints = new Map();
 const eventWaiters = new Map();
@@ -59,6 +130,10 @@ function line(text) {
 
 function reportError(kind, detail = "") {
   line(`ERR: ${kind}${detail ? ` ${detail}` : ""}`);
+}
+
+function reportCaught(error) {
+  if (!error.reported) reportError(classify(error));
 }
 
 function waitForEvent(name) {
@@ -80,7 +155,7 @@ function sleep(milliseconds) {
 }
 
 function trace(direction, message) {
-  if (env.DAP_DEBUG) stderr.write(`DAP ${direction} ${JSON.stringify(message).slice(0, 300)}\n`);
+  if (env.DAP_DEBUG) stderr.write(`DAP ${direction} ${escapedField(JSON.stringify(message), 300)}\n`);
 }
 
 function send(message) {
@@ -90,7 +165,7 @@ function send(message) {
 }
 
 function request(commandName, requestArguments = {}) {
-  if (!transport || terminated) return Promise.reject(new Error("no-session"));
+  if (!transport || terminated) return Promise.reject(fatalTransportError || new Error("no-session"));
   const sequence = nextSequence++;
   send({ type: "request", seq: sequence, command: commandName, arguments: requestArguments });
   return new Promise((resolve, reject) => {
@@ -137,14 +212,25 @@ function onMessage(message) {
   }
 }
 
-function connectTransport(writer, reader, closer = reader) {
-  transport = { write: (chunk) => writer.write(chunk), destroy: () => closer.destroy?.() };
+function connectTransport(writer, reader, destroy) {
+  transport = { write: (chunk) => writer.write(chunk), destroy };
   const parser = new DapFrameParser();
+  let malformed = false;
   reader.on("data", (chunk) => {
+    if (malformed) return;
     try {
       for (const message of parser.push(chunk)) onMessage(message);
     } catch {
+      malformed = true;
+      terminated = true;
+      fatalTransportError = new Error("malformed-frame");
+      fatalTransportError.reported = true;
       reportError("malformed-frame");
+      for (const waiter of pending.values()) waiter.reject(fatalTransportError);
+      pending.clear();
+      emitEvent("initialized");
+      emitEvent("terminated");
+      transport.destroy();
     }
   });
   reader.on("error", () => {
@@ -156,10 +242,10 @@ function connectTransport(writer, reader, closer = reader) {
 }
 
 async function startAdapter(spec) {
-  if (isTcpAdapterSpec(spec)) {
-    const separator = spec.lastIndexOf(":");
-    const socket = createConnection(Number(spec.slice(separator + 1)), spec.slice(0, separator));
-    connectTransport(socket, socket, socket);
+  const endpoint = tcpAdapterEndpoint(spec);
+  if (endpoint) {
+    const socket = createConnection(endpoint.port, endpoint.host);
+    connectTransport(socket, socket, () => socket.destroy());
     await new Promise((resolve, reject) => {
       socket.once("connect", resolve);
       socket.once("error", reject);
@@ -168,21 +254,37 @@ async function startAdapter(spec) {
   }
   const isScript = /\.(mjs|cjs|js)$/.test(spec);
   const [commandName, commandArguments] = isScript ? [process.execPath, [spec]] : [spec, []];
-  const child = spawn(commandName, commandArguments, { stdio: ["pipe", "pipe", "inherit"] });
-  connectTransport(child.stdin, child.stdout, child);
-  child.on("error", () => reportError("adapter-failed"));
+  const child = spawn(commandName, commandArguments, { stdio: ["pipe", "pipe", "pipe"] });
+  let retainedStderr = Buffer.alloc(0);
+  child.stderr.on("data", (chunk) => {
+    if (chunk.length >= MAX_STDERR_BYTES) retainedStderr = Buffer.from(chunk.subarray(chunk.length - MAX_STDERR_BYTES));
+    else retainedStderr = Buffer.from(Buffer.concat([retainedStderr, chunk]).subarray(-MAX_STDERR_BYTES));
+  });
+  connectTransport(child.stdin, child.stdout, () => {
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+    child.kill();
+  });
+  child.on("error", () => {
+    if (!terminated) reportError("adapter-failed");
+  });
 }
 
 async function waitForStop(required = true, graceMilliseconds) {
+  if (fatalTransportError) throw fatalTransportError;
   if (currentStop || terminated) return Boolean(currentStop);
   await Promise.race([waitForEvent("stopped"), waitForEvent("terminated"), sleep(graceMilliseconds ?? timeoutMs)]);
+  if (fatalTransportError) throw fatalTransportError;
   if (required && !currentStop && !terminated) throw new Error("timeout");
   return Boolean(currentStop);
 }
 
 async function waitForInitialization() {
+  if (fatalTransportError) throw fatalTransportError;
   if (initialized) return;
   await Promise.race([waitForEvent("initialized"), sleep(timeoutMs)]);
+  if (fatalTransportError) throw fatalTransportError;
   if (!initialized) throw new Error("timeout");
 }
 
@@ -217,7 +319,7 @@ async function launch(adapter, program, programArguments) {
     await waitForStop(false, 2_000);
     line("READY: launch");
   } catch (error) {
-    reportError(classify(error));
+    reportCaught(error);
   }
 }
 
@@ -227,10 +329,10 @@ async function snapshot() {
     const response = await request("stackTrace", { threadId: currentStop?.threadId || 1, levels: 1 });
     topFrame = response.body?.stackFrames?.[0];
     const frame = topFrame;
-    if (frame) line(`STOP: stopped reason=${currentStop?.reason || "unknown"} threadId=${currentStop?.threadId || ""} ${frame.name} at ${frame.source?.path || "?"}:${frame.line || 0}:${frame.column || 0}`);
-    else line(`STOP: stopped reason=${currentStop?.reason || "unknown"} threadId=${currentStop?.threadId || ""} ? at ?:0:0`);
+    if (frame) line(`STOP: stopped reason=${renderAdapterField(currentStop?.reason || "unknown")} threadId=${renderAdapterField(currentStop?.threadId || "")} ${renderAdapterField(frame.name)} at ${renderAdapterField(frame.source?.path || "?")}:${renderAdapterField(frame.line || 0)}:${renderAdapterField(frame.column || 0)}`);
+    else line(`STOP: stopped reason=${renderAdapterField(currentStop?.reason || "unknown")} threadId=${renderAdapterField(currentStop?.threadId || "")} ? at ?:0:0`);
   } catch (error) {
-    reportError(classify(error));
+    reportCaught(error);
   }
 }
 
@@ -244,18 +346,24 @@ async function frameForCurrentStop() {
 }
 
 function boundedTable(header, rows) {
-  const rendered = rows.map((row) => row.join("\t"));
-  let output = `${header.join("\t")}\n`;
+  let output = `${header.map((field) => renderAdapterField(field)).join("\t")}\n`;
+  let outputBytes = Buffer.byteLength(output);
   let count = 0;
-  for (const row of rendered.slice(0, MAX_ROWS)) {
-    const candidate = `${row}\n`;
-    if (Buffer.byteLength(output + candidate) > MAX_OUTPUT_BYTES) break;
-    output += candidate;
-    count++;
+  let droppedRows = 0;
+  let droppedBytes = 0;
+  for (const row of rows) {
+    const candidate = `${row.map((field) => renderAdapterField(field)).join("\t")}\n`;
+    const candidateBytes = Buffer.byteLength(candidate);
+    if (count < MAX_ROWS && outputBytes + candidateBytes <= MAX_OUTPUT_BYTES) {
+      output += candidate;
+      outputBytes += candidateBytes;
+      count++;
+    } else {
+      droppedRows++;
+      droppedBytes += candidateBytes;
+    }
   }
   stdout.write(output);
-  const droppedRows = rendered.length - count;
-  const droppedBytes = Buffer.byteLength(rendered.slice(count).join("\n") + (droppedRows ? "\n" : ""));
   if (droppedRows || droppedBytes) line(`TRUNCATED: rows dropped=${droppedRows} bytes dropped=${droppedBytes}`);
 }
 
@@ -279,7 +387,7 @@ async function handleCommand(input) {
       await request("configurationDone");
       line("READY: attach");
     } catch (error) {
-      reportError(classify(error));
+      reportCaught(error);
     }
     return;
   }
@@ -330,7 +438,7 @@ async function handleCommand(input) {
       if (!parts.length) return reportError("invalid-args");
       const frame = await frameForCurrentStop();
       const response = await request("evaluate", { expression: parts.join(" "), frameId: frame.id });
-      line(`EVAL\t${response.body?.result || ""}`);
+      line(`EVAL\t${renderAdapterField(response.body?.result || "")}`);
       return;
     }
     if (commandName === "threads") {
@@ -346,7 +454,7 @@ async function handleCommand(input) {
     }
     reportError("invalid-args");
   } catch (error) {
-    reportError(classify(error));
+    reportCaught(error);
   }
 }
 
@@ -355,6 +463,6 @@ if (isMain) {
   let chain = Promise.resolve();
   const input = createInterface({ input: stdin, crlfDelay: Infinity });
   input.on("line", (value) => {
-    chain = chain.then(() => handleCommand(value)).catch(() => reportError("adapter-failed"));
+    chain = chain.then(() => handleCommand(value)).catch((error) => reportCaught(error));
   });
 }
