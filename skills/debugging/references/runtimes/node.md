@@ -16,11 +16,11 @@ node --enable-source-maps --inspect=9229 dist/index.js
 node --inspect=9229 --import tsx index.ts
 NODE_OPTIONS='--inspect-brk=9229' npx tsx index.ts
 bun --inspect-brk src/index.ts
-deno run --inspect-brk --allow-all src/main.ts
+deno run --inspect-brk src/main.ts
 vitest --inspect-brk --no-file-parallelism
 ```
 
-Bun uses WebKit Inspector Protocol, not V8 CDP. Deno and Node use V8 inspector. The Node discovery endpoint exposes structured targets; use a CDP client instead of scraping debugger text when available.
+Bun uses WebKit Inspector Protocol, not V8 CDP. Deno and Node use V8 inspector. Add only the Deno permissions the target already requires, such as a bounded `--allow-read=<path>`; do not use `--allow-all` without separate approval that names the unrestricted host access being granted. The Node discovery endpoint exposes structured targets; use a CDP client instead of scraping debugger text when available.
 
 At `node inspect`, useful commands include `cont`, `next`, `step`, `out`, `pause`, `bt`, `scripts`, `sb`, `cb`, `breakpoints`, `watch`, `exec`, `repl`, and `kill`. With `tsx`, do not trust a listed pending source breakpoint as proof it can bind.
 
