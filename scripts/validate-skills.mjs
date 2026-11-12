@@ -5,18 +5,26 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
+import { isPortableSkillName, validateCatalog } from "./lib/catalog.mjs";
 import { validateFrontmatter } from "./lib/frontmatter.mjs";
 import { collectScannableTextFiles, validateTextFile } from "./lib/markdown.mjs";
 import {
   compareText,
   fileStatus,
-  pathExists,
   report,
   repositoryPath,
 } from "./lib/validation-utils.mjs";
 
 const MAX_ERRORS = 50;
 const REQUIRED_FILES = ["LICENSE.md", "NOTICE.md", "SKILL.md"];
+const REQUIRED_P0_SKILLS = [
+  "ast-grep",
+  "coding-agent-sessions",
+  "debugging",
+  "git-master",
+  "lsp-setup",
+  "review-work",
+];
 
 async function validateSkill(repositoryRoot, skillEntry, errors) {
   const skillPath = path.join(repositoryRoot, "skills", skillEntry.name);
@@ -77,14 +85,31 @@ async function validateRepositoryWithMetadata(repositoryRoot) {
   const absoluteRoot = path.resolve(repositoryRoot);
   const skillsPath = path.join(absoluteRoot, "skills");
   const errors = [];
-  if (!(await pathExists(skillsPath))) {
+  let skillsStatus;
+  try {
+    skillsStatus = await lstat(skillsPath);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+  if (skillsStatus === undefined) {
     report(errors, { path: "skills", line: 1, message: "Skills directory is missing." });
+  } else if (skillsStatus.isSymbolicLink() || !skillsStatus.isDirectory()) {
+    report(errors, {
+      path: "skills",
+      line: 1,
+      message: "Skills path must be a directory and must not be a symbolic link.",
+    });
   } else {
     const entries = [];
     let symbolicLinkCount = 0;
     const packageEntries = (await readdir(skillsPath, { withFileTypes: true }))
       .sort((left, right) => compareText(left.name, right.name));
     for (const entry of packageEntries) {
+      if (entry.name === "index.json") {
+        continue;
+      }
       const entryPath = path.join(skillsPath, entry.name);
       const status = await lstat(entryPath);
       if (status.isSymbolicLink()) {
@@ -96,11 +121,29 @@ async function validateRepositoryWithMetadata(repositoryRoot) {
         });
       } else if (status.isDirectory()) {
         entries.push(entry);
+        if (!isPortableSkillName(entry.name)) {
+          report(errors, {
+            path: repositoryPath(absoluteRoot, entryPath),
+            line: 1,
+            message: "Skill package name must use portable lowercase kebab-case.",
+          });
+        }
       }
     }
     if (entries.length === 0 && symbolicLinkCount === 0) {
       report(errors, { path: "skills", line: 1, message: "No skill packages found." });
     }
+    const packageNames = new Set(entries.map((entry) => entry.name));
+    for (const requiredSkill of REQUIRED_P0_SKILLS) {
+      if (!packageNames.has(requiredSkill)) {
+        report(errors, {
+          path: `skills/${requiredSkill}`,
+          line: 1,
+          message: "Required P0 skill package is missing.",
+        });
+      }
+    }
+    await validateCatalog(absoluteRoot, packageNames, errors);
     for (const entry of entries) {
       await validateSkill(absoluteRoot, entry, errors);
     }

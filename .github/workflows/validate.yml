@@ -24,7 +24,7 @@ jobs:
         run: npx --no-install skills add . --list
 
       - name: Test repository tooling
-        run: node --test test/validate-skills.test.mjs skills/debugging/references/scripts/dap.test.mjs
+        run: node --test test/catalog.test.mjs test/validate-skills.test.mjs skills/debugging/references/scripts/dap.test.mjs
 
       - name: Validate skill repository
         run: node scripts/validate-skills.mjs

@@ -2,7 +2,16 @@
 
 Portable Agent Skills from [agent-guardrails](https://github.com/agent-guardrails). This repository holds many independently installable skills in one place. Each skill lives at `skills/<name>/` and carries its own `SKILL.md`, `LICENSE.md`, and `NOTICE.md`.
 
-The initial collection focuses on debugging and post-implementation review. More skills can be added without changing the installation model.
+## Skills
+
+- `ast-grep` searches and rewrites code by syntax-tree shape.
+- `coding-agent-sessions` finds and reconstructs bounded coding-agent session history.
+- `debugging` guides evidence-driven runtime debugging and real-surface fix verification.
+- `git-master` handles Git inspection, history work, and explicitly authorized mutations.
+- `lsp-setup` configures and verifies Language Server Protocol support.
+- `review-work` reviews completed implementation through manual QA and an independent gate review.
+
+More skills can be added without changing the installation model.
 
 ## Install a skill
 
@@ -25,6 +34,22 @@ npx skills check
 npx skills update
 npx skills remove <name>
 ```
+
+## OpenCode v2 catalog
+
+OpenCode v2.2.5 and later can load this repository as a remote skill catalog. Add the catalog base URL to `opencode.json`:
+
+```json
+{
+  "skills": [
+    "https://raw.githubusercontent.com/agent-guardrails/agent-skills/main/skills/"
+  ]
+}
+```
+
+OpenCode fetches `index.json` from that base URL, then downloads each listed file from the same origin at `<name>/<file>`. It refreshes a catalog skill when that skill's `version` changes in `index.json`.
+
+Each version has the form `sha256:<64 lowercase hex digits>` and is derived from the package's sorted relative paths and exact file bytes. Adding, removing, renaming, or editing any package file requires regenerating that skill's digest in `skills/index.json`. Run `node scripts/validate-skills.mjs`; a stale version diagnostic reports the required digest for the current package content.
 
 ## Repository layout
 

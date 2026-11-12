@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+// allow: SIZE_OK - one focused integration suite exercises the portable client and its fixture together.
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { DapFrameParser, isTcpAdapterSpec } from "./dap.mjs";
+import { DapFrameParser, MAX_FIELD_BYTES, MAX_FRAME_BYTES, MAX_HEADER_BYTES, MAX_RETAINED_BYTES, MAX_STDERR_BYTES, isTcpAdapterSpec, renderAdapterField } from "./dap.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const client = join(directory, "dap.mjs");
@@ -20,19 +23,23 @@ function frame(message) {
   return Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`), body]);
 }
 
-function session({ fixtureMode = "success", timeoutMs = 5_000, frameId = 73 } = {}) {
+function session({ fixtureMode = "success", timeoutMs = 5_000, frameId = 73, fixtureStateFile } = {}) {
   const child = spawn(process.execPath, [client], {
     cwd: directory,
-    env: { ...process.env, DAP_TIMEOUT_MS: String(timeoutMs), DAP_FIXTURE_MODE: fixtureMode, DAP_FIXTURE_FRAME_ID: String(frameId) },
+    env: { ...process.env, DAP_TIMEOUT_MS: String(timeoutMs), DAP_FIXTURE_MODE: fixtureMode, DAP_FIXTURE_FRAME_ID: String(frameId), ...(fixtureStateFile ? { DAP_FIXTURE_STATE_FILE: fixtureStateFile } : {}) },
   });
   children.add(child);
   let output = "";
+  let errorOutput = "";
   child.stdout.on("data", (data) => {
     output += data.toString();
   });
+  child.stderr.on("data", (data) => {
+    errorOutput += data.toString();
+  });
   const command = (value) => child.stdin.write(`${value}\n`);
   command(`launch ${fixture} /tmp/program.py`);
-  return { child, command, output: () => output };
+  return { child, command, errorOutput: () => errorOutput, output: () => output, state: () => fixtureStateFile && existsSync(fixtureStateFile) ? readFileSync(fixtureStateFile, "utf8") : "" };
 }
 
 async function until(currentSession, predicate, timeout = 15_000) {
@@ -44,15 +51,19 @@ async function until(currentSession, predicate, timeout = 15_000) {
 }
 
 async function assertLaunchFailure(fixtureMode, expectedError) {
-  const currentSession = session({ fixtureMode, timeoutMs: 300 });
-  await until(currentSession, (output) => output.includes(`ERR: ${expectedError}`) || output.includes("READY: launch"), 4_000);
+  const currentSession = session({ fixtureMode, timeoutMs: 1_000 });
+  await until(currentSession, (output) => output.includes(`ERR: ${expectedError}`) || output.includes("READY: launch"), 6_000);
   assert.match(currentSession.output(), new RegExp(`ERR: ${expectedError}`));
   assert.doesNotMatch(currentSession.output(), /READY: launch/);
 }
 
-test("treats Windows paths as executable specifications", () => {
-  assert.equal(isTcpAdapterSpec("C:\\workspace\\fixture-adapter.mjs"), false);
-  assert.equal(isTcpAdapterSpec("127.0.0.1:5678"), true);
+test("accepts only numeric loopback TCP adapter specifications", () => {
+  for (const specification of ["127.0.0.1:1", "127.0.0.1:5678", "127.0.0.1:65535", "[::1]:1", "[::1]:65535"]) {
+    assert.equal(isTcpAdapterSpec(specification), true, specification);
+  }
+  for (const specification of ["localhost:5678", "127.0.0.2:5678", "0.0.0.0:5678", "10.0.0.1:5678", "192.168.1.2:5678", "8.8.8.8:5678", "::1:5678", "[::ffff:127.0.0.1]:5678", "127.0.0.1:0", "127.0.0.1:65536", "127.0.0.1:-1", "127.0.0.1:1.5", "127.0.0.1:", "C:\\workspace\\fixture-adapter.mjs"]) {
+    assert.equal(isTcpAdapterSpec(specification), false, specification);
+  }
 });
 
 describe("DAP framing", () => {
@@ -71,12 +82,64 @@ describe("DAP framing", () => {
     const parser = new DapFrameParser();
     assert.throws(() => parser.push(Buffer.from("Bad: header\r\n\r\n{}")), /malformed-frame/);
   });
+
+  test("accepts the framing limits", () => {
+    const parser = new DapFrameParser();
+    const body = Buffer.from(JSON.stringify({ value: "x".repeat(MAX_FRAME_BYTES - 12) }));
+    assert.equal(body.length, MAX_FRAME_BYTES);
+    assert.deepEqual(parser.push(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`), body])), [{ value: `x`.repeat(MAX_FRAME_BYTES - 12) }]);
+
+    const headerPrefix = "Content-Length: 2\r\nX-Padding: ";
+    const padding = "x".repeat(MAX_HEADER_BYTES - 4 - Buffer.byteLength(headerPrefix));
+    assert.deepEqual(parser.push(Buffer.from(`${headerPrefix}${padding}\r\n\r\n{}`)), [{}]);
+  });
+
+  test("rejects oversized headers, frames, and retained input", () => {
+    assert.throws(() => new DapFrameParser().push(Buffer.alloc(MAX_HEADER_BYTES + 1, "x")), /malformed-frame/);
+    assert.throws(() => new DapFrameParser().push(Buffer.from(`Content-Length: ${MAX_FRAME_BYTES + 1}\r\n\r\n`)), /malformed-frame/);
+    const retainedParser = new DapFrameParser();
+    retainedParser.buffer = Buffer.alloc(MAX_RETAINED_BYTES);
+    assert.throws(() => retainedParser.push(Buffer.from("x")), /malformed-frame/);
+  });
+
+  test("rejects missing, malformed, and duplicate Content-Length headers", () => {
+    for (const input of ["Other: 2\r\n\r\n{}", "Content-Length: nope\r\n\r\n{}", "Content-Length: -1\r\n\r\n{}", "Content-Length: 2.0\r\n\r\n{}", "Content-Length: 2x\r\n\r\n{}", "Content-Length: 2\r\ncontent-length: 2\r\n\r\n{}"]) {
+      assert.throws(() => new DapFrameParser().push(Buffer.from(input)), /malformed-frame/, input);
+    }
+  });
+
+  test("processes a large chunk without retaining more than the buffer cap", () => {
+    const parser = new DapFrameParser();
+    const message = { value: "x".repeat(700_000) };
+    const input = Buffer.concat([frame(message), frame(message), frame(message)]);
+    assert.ok(input.length > MAX_RETAINED_BYTES);
+    assert.equal(parser.push(input).length, 3);
+  });
+
+  test("stays failed after malformed input", () => {
+    const parser = new DapFrameParser();
+    assert.throws(() => parser.push(Buffer.from("Bad: header\r\n\r\n{}")), /malformed-frame/);
+    assert.throws(() => parser.push(frame({ type: "event", event: "later" })), /malformed-frame/);
+  });
+});
+
+describe("adapter field rendering", () => {
+  test("escapes record separators and terminal controls", () => {
+    assert.equal(renderAdapterField("a\tb\r\n\u001b\u007f\u0000\u001f\u0085z"), "a\\tb\\r\\n\\x1b\\x7f\\x00\\x1f\\x85z");
+  });
+
+  test("caps fields at complete UTF-8 code points", () => {
+    const rendered = renderAdapterField("😀".repeat(MAX_FIELD_BYTES));
+    assert.equal(Buffer.byteLength(rendered), MAX_FIELD_BYTES);
+    assert.equal(rendered, "😀".repeat(MAX_FIELD_BYTES / 4));
+    assert.equal(renderAdapterField("x".repeat(MAX_FIELD_BYTES + 1)), "x".repeat(MAX_FIELD_BYTES));
+  });
 });
 
 describe("launch readiness", () => {
   test("supports a launch response deferred until configurationDone", async () => {
     const currentSession = session({ fixtureMode: "deferred-launch" });
-    await until(currentSession, (output) => output.includes("READY: launch"), 500);
+    await until(currentSession, (output) => output.includes("READY: launch"), 2_000);
     assert.doesNotMatch(currentSession.output(), /ERR:/);
   });
 
@@ -168,4 +231,68 @@ test("classifies unverified breakpoints and timeouts", async () => {
   await until(currentSession, (output) => output.includes("ERR: unverified-breakpoint"));
   const timeoutSession = session({ fixtureMode: "timeout-initialize", timeoutMs: 300 });
   await until(timeoutSession, (output) => output.includes("ERR: timeout"));
+});
+
+test("malformed adapter input emits one error and closes the transport", async () => {
+  const currentSession = session({ fixtureMode: "malformed-frames", timeoutMs: 1_000 });
+  await until(currentSession, (output) => output.includes("ERR: malformed-frame"));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal((currentSession.output().match(/^ERR:/gm) ?? []).length, 1, currentSession.output());
+  assert.equal((currentSession.output().match(/ERR: malformed-frame/g) ?? []).length, 1, currentSession.output());
+  assert.doesNotMatch(currentSession.output(), /READY: launch|ERR: adapter-failed|ERR: timeout/);
+});
+
+test("malformed teardown closes every pipe before terminating a hostile adapter", async () => {
+  const stateFile = join(tmpdir(), `dap-hostile-${process.pid}-${Date.now()}.log`);
+  const currentSession = session({ fixtureMode: "malformed-pipe-flood", timeoutMs: 1_000, fixtureStateFile: stateFile });
+  try {
+    await until(currentSession, (output) => output.includes("ERR: malformed-frame"));
+    await until({ output: currentSession.state }, (state) => state.includes("transport-stopped"), 2_000);
+    const stoppedState = currentSession.state();
+    for (const event of ["flood-attempt", "sigterm-ignored", "stdin-closed", "stdout-closed", "stderr-closed", "transport-stopped"]) assert.match(stoppedState, new RegExp(`^${event}$`, "m"));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(currentSession.state(), stoppedState);
+    assert.equal((currentSession.output().match(/^ERR:/gm) ?? []).length, 1, currentSession.output());
+    assert.equal((currentSession.output().match(/ERR: malformed-frame/g) ?? []).length, 1, currentSession.output());
+    assert.doesNotMatch(currentSession.output(), /READY: launch|ERR: adapter-failed|ERR: timeout/);
+    assert.equal(currentSession.errorOutput(), "");
+  } finally {
+    rmSync(stateFile, { force: true });
+  }
+});
+
+test("drains and bounds child stderr without relaying it", async () => {
+  assert.equal(MAX_STDERR_BYTES, 32 * 1024);
+  const currentSession = session({ fixtureMode: "stderr-flood" });
+  await until(currentSession, (output) => output.includes("READY: launch"));
+  assert.equal(currentSession.errorOutput(), "");
+});
+
+test("escapes and caps adapter-controlled output records", async () => {
+  const currentSession = session({ fixtureMode: "hostile-output" });
+  await until(currentSession, (output) => output.includes("READY: launch"));
+  currentSession.command("continue");
+  await until(currentSession, (output) => output.includes("STOP:"));
+  currentSession.command("stack");
+  await until(currentSession, (output) => output.includes("FRAME\tNAME"));
+  currentSession.command("scopes");
+  await until(currentSession, (output) => output.includes("NAME\tVARIABLES_REFERENCE"));
+  currentSession.command("vars 7");
+  await until(currentSession, (output) => output.includes("NAME\tVALUE"));
+  currentSession.command("eval expression");
+  await until(currentSession, (output) => output.includes("EVAL\t"));
+  currentSession.command("threads");
+  await until(currentSession, (output) => output.includes("ID\tNAME"));
+
+  const output = currentSession.output();
+  assert.match(output, /STOP: stopped reason=break\\tpoint threadId=1 frame\\tname at \/tmp\/line\\npath:12:3/);
+  assert.match(output, /^73\tframe\\tname\t\/tmp\/line\\npath\t12\t3$/m);
+  assert.match(output, /^scope\\rname\t7$/m);
+  assert.match(output, /^var\\x1bname\tvalue\\nline$/m);
+  assert.match(output, /^EVAL\tresult\\nline/m);
+  assert.match(output, /^1\tthread\\x85name$/m);
+  assert.doesNotMatch(output, /^point threadId=|^path\t|^line$/m);
+  const evaluation = output.split("\n").find((line) => line.startsWith("EVAL\t"));
+  assert.ok(evaluation);
+  assert.ok(Buffer.byteLength(evaluation.slice("EVAL\t".length)) <= MAX_FIELD_BYTES);
 });

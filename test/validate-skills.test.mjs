@@ -1,37 +1,56 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { validateRepository } from "../scripts/validate-skills.mjs";
+import { validateRepository as validateRepositoryWithoutCatalog } from "../scripts/validate-skills.mjs";
+import {
+  createRepository,
+  createSkill,
+  ensureRequiredP0Skills,
+  validateRepository,
+  writeValidCatalog,
+} from "./helpers/repository-fixtures.mjs";
 
 const validatorPath = fileURLToPath(
   new URL("../scripts/validate-skills.mjs", import.meta.url),
 );
 
-async function createRepository() {
-  const repositoryPath = await mkdtemp(path.join(tmpdir(), "agent-skills-validator-"));
-  await mkdir(path.join(repositoryPath, "skills"));
-  return repositoryPath;
-}
+test("rejects a symlinked or non-directory skills root", async (t) => {
+  await t.test("symlink", async () => {
+    const repositoryPath = await createRepository();
+    const skillsPath = path.join(repositoryPath, "skills");
+    const targetPath = path.join(repositoryPath, "skills-target");
+    await rm(skillsPath, { recursive: true });
+    await mkdir(targetPath);
+    await symlink(targetPath, skillsPath, "dir");
 
-async function createSkill(
-  repositoryPath,
-  skillName,
-  skillMarkdown = `---\nname: ${skillName}\ndescription: Portable test skill.\n---\n`,
-) {
-  const skillPath = path.join(repositoryPath, "skills", skillName);
-  await mkdir(skillPath, { recursive: true });
-  await Promise.all([
-    writeFile(path.join(skillPath, "SKILL.md"), skillMarkdown),
-    writeFile(path.join(skillPath, "LICENSE.md"), "License\n"),
-    writeFile(path.join(skillPath, "NOTICE.md"), "Notice\n"),
-  ]);
-  return skillPath;
-}
+    const errors = await validateRepositoryWithoutCatalog(repositoryPath);
+
+    assert.deepEqual(errors, [{
+      path: "skills",
+      line: 1,
+      message: "Skills path must be a directory and must not be a symbolic link.",
+    }]);
+  });
+
+  await t.test("regular file", async () => {
+    const repositoryPath = await createRepository();
+    const skillsPath = path.join(repositoryPath, "skills");
+    await rm(skillsPath, { recursive: true });
+    await writeFile(skillsPath, "not a directory\n");
+
+    const errors = await validateRepositoryWithoutCatalog(repositoryPath);
+
+    assert.deepEqual(errors, [{
+      path: "skills",
+      line: 1,
+      message: "Skills path must be a directory and must not be a symbolic link.",
+    }]);
+  });
+});
 
 test("accepts a valid skill package with portable Markdown links", async () => {
   const repositoryPath = await createRepository();
@@ -498,11 +517,13 @@ test("reports a forbidden reference in a bundled script", async () => {
 
 test("CLI emits deterministic bounded path:line diagnostics and exits nonzero", async () => {
   const repositoryPath = await createRepository();
+  await ensureRequiredP0Skills(repositoryPath);
   const skillPath = await createSkill(repositoryPath, "invalid");
   await writeFile(
     path.join(skillPath, "NOTICE.md"),
     Array.from({ length: 60 }, () => "precommit-review").join("\n"),
   );
+  await writeValidCatalog(repositoryPath);
 
   const firstRun = spawnSync(process.execPath, [validatorPath, repositoryPath], {
     encoding: "utf8",

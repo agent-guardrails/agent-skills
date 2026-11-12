@@ -1,0 +1,81 @@
+{
+  "skills": [
+    {
+      "name": "ast-grep",
+      "version": "sha256:ec4f2186c7be5abac395ff92fe7db4a14b597c7dffa0c491689b1bd4da99ee48",
+      "files": [
+        "LICENSE.md",
+        "NOTICE.md",
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "coding-agent-sessions",
+      "version": "sha256:f27fa3ffb5e12c4d7d337e6818556d3abef472adef8693cfb9adceb7600d3ded",
+      "files": [
+        "LICENSE.md",
+        "NOTICE.md",
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "debugging",
+      "version": "sha256:074be023b7a2a506138ed80f5276ba4e7c4e625ba65513b75505031de677a277",
+      "files": [
+        "LICENSE.md",
+        "NOTICE.md",
+        "SKILL.md",
+        "references/methodology/00-setup.md",
+        "references/methodology/02-investigate.md",
+        "references/methodology/03-flaky-triage.md",
+        "references/methodology/04-independent-review.md",
+        "references/methodology/05-escalate.md",
+        "references/methodology/06-fix.md",
+        "references/methodology/08-qa.md",
+        "references/methodology/09-cleanup.md",
+        "references/methodology/partial-runtime-evidence.md",
+        "references/runtimes/bundled-js-binary.md",
+        "references/runtimes/go.md",
+        "references/runtimes/native-binary.md",
+        "references/runtimes/node.md",
+        "references/runtimes/python.md",
+        "references/runtimes/rust.md",
+        "references/scripts/dap.mjs",
+        "references/scripts/dap.test.mjs",
+        "references/scripts/fixture-adapter.mjs",
+        "references/tools/dap.md",
+        "references/tools/frida.md",
+        "references/tools/ghidra.md",
+        "references/tools/pwndbg.md",
+        "references/tools/pwntools.md"
+      ]
+    },
+    {
+      "name": "git-master",
+      "version": "sha256:7acaadffbfd026dc9b97b7e39218e54235471fe8973dc78ef527810ee1b5eed2",
+      "files": [
+        "LICENSE.md",
+        "NOTICE.md",
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "lsp-setup",
+      "version": "sha256:abc4f53f8cf18942571d143bcf77717fa61fb2316886f6fe36acaf66631e409f",
+      "files": [
+        "LICENSE.md",
+        "NOTICE.md",
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "review-work",
+      "version": "sha256:bd29327b73740d76607d1b1d93ba5db127cfa12895d55f005e58a5e5c6936ff8",
+      "files": [
+        "LICENSE.md",
+        "NOTICE.md",
+        "SKILL.md"
+      ]
+    }
+  ]
+}

@@ -31,7 +31,7 @@ There is no build step. Use Node.js 22.20.0 or newer and run these test and vali
 ```sh
 npm ci --ignore-scripts
 npx --no-install skills add . --list
-node --test test/validate-skills.test.mjs skills/debugging/references/scripts/dap.test.mjs
+node --test test/catalog.test.mjs test/validate-skills.test.mjs skills/debugging/references/scripts/dap.test.mjs
 node scripts/validate-skills.mjs
 ```
 

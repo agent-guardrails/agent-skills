@@ -34,4 +34,6 @@ The initial adapted skills are based on public OMO v5.1.60 under SUL-1.0. Their 
 
 ## Validate and submit
 
+Keep the skill's `files` entry in `skills/index.json` complete and sorted. Every package change, including a file addition, removal, rename, or byte-level edit, requires a new content-derived `sha256:<64 lowercase hex digits>` version. Run `node scripts/validate-skills.mjs` and replace a stale version with the digest reported by the validator.
+
 Run the commands in [AGENTS.md](AGENTS.md), then open a focused pull request linked to the issue or card. Keep unrelated cleanup out of the change.
